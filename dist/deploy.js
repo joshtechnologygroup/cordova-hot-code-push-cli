@@ -17,12 +17,22 @@
 
   function execute(context) {
     var executeDfd = Q.defer();
+    var argv = context.argv;
 
-    build(context).then(function () {
+    // If no options are passed build will be executed by default, to prevent build pass --no-build
+    if (argv.build !== false) {
+      console.log("Building...");
+      build(context).then(function () {
+        deploy(context).then(function () {
+          executeDfd.resolve();
+        });
+      });
+    } else {
+      console.log("Skipping Build...");
       deploy(context).then(function () {
         executeDfd.resolve();
       });
-    });
+    }
 
     return executeDfd.promise;
   }
@@ -31,7 +41,7 @@
     var executeDfd = Q.defer(),
         config,
         credentials,
-        ignore = context.ignoredFiles;
+        ignore = context.ignoredFilesGlob;
 
     try {
       config = fs.readFileSync(context.defaultConfig, 'utf8');
@@ -59,18 +69,10 @@
     ignore = ignore.filter(function (ignoredFile) {
       return !ignoredFile.match(/^chcp/);
     });
-    ignore = ignore.map(function (ignoredFile) {
-      return '!' + ignoredFile;
-    });
 
     // console.log('Credentials: ', credentials);
     // console.log('Config: ', config);
-    // console.log('Ignore: ', ignore);
-
-    var files = readdirp({
-      root: context.sourceDirectory,
-      fileFilter: ignore
-    });
+    // console.log('Ignore: ', ignore, context.sourceDirectory);
 
     var uploader = s3sync({
       key: credentials.key,
@@ -90,7 +92,23 @@
       }
     });
 
-    files.pipe(uploader);
+    if (context.argv.buildFilesOnly) {
+      uploader.write({
+        src: context.manifestFilePath,
+        dest: 'chcp.manifest'
+      });
+      uploader.write({
+        src: context.projectsConfigFilePath,
+        dest: 'chcp.json'
+      });
+    } else {
+      var files = readdirp({
+        root: context.sourceDirectory,
+        fileFilter: ignore,
+        directoryFilter: ignore
+      });
+      files.pipe(uploader);
+    }
 
     console.log('Deploy started');
     uploader.on('error', function (err) {
